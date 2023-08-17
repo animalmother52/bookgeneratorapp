@@ -1,0 +1,107 @@
+import streamlit as st
+import openai
+from docx import Document
+import os
+
+YOUR_SITE_URL = "http://192.168.100.242:5000"
+YOUR_APP_NAME = "Book Generator"
+OPENROUTER_API_KEY = (insert api)
+
+def make_api_call(prompt, max_tokens):
+    retries = 3
+    for i in range(retries):
+        try:
+            response = openai.ChatCompletion.create(
+                model="anthropic/claude-2",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=min(max_tokens, 100000),
+                headers={
+                    "HTTP-Referer": YOUR_SITE_URL,
+                    "X-Title": YOUR_APP_NAME
+                }
+            )
+            if 'choices' in response and len(response['choices']) > 0:
+                return response['choices'][0]['message']
+            else:
+                raise ValueError("Unexpected response structure from OpenRouter API.")
+        except openai.error.APIError as e:
+            if i < retries - 1:
+                time.sleep(1)
+                continue
+            else:
+                raise
+
+def generate_book(topic, description, reader_level, writing_style, num_chapters, num_sections_per_chapter, section_length, filename):
+    # Set your OpenRouter API key and base URL
+    openai.api_base = "https://openrouter.ai/api/v1"
+    openai.api_key = OPENROUTER_API_KEY
+
+    # Define initial prompt for table of contents
+    toc_prompt = f"Create a detailed table of contents for a book on the topic of '{topic}', which is about '{description}'. The chapters and chapter sections in this book are intended for a '{reader_level}' audience for the topic. The book should have {num_chapters} chapters, each with {num_sections_per_chapter} sections. The table of contents should be structured with each chapter followed by its sections, like this:\n\nChapter 1: Chapter Title\n- Section 1.1: Section Title\n- Section 1.2: Section Title\n\nChapter 2: Chapter Title\n- Section 2.1: Section Title\n- Section 2.2: Section Title\n\nPlease generate a similar structure for the given number of chapters and sections."
+
+    # Generate table of contents
+    response = make_api_call(toc_prompt, 1500)
+    toc = response.get('content', '').strip()
+
+    # Parse the table of contents to extract the chapter titles
+    toc_lines = toc.split('\n')
+    chapter_titles = [line for line in toc_lines if line.startswith('Chapter')]
+
+    # Create a new Document for the entire book
+    doc = Document()
+
+    # Add the table of contents to the document
+    doc.add_heading("Table of Contents", level=1)
+    doc.add_paragraph(toc)
+    doc.add_page_break()  # Add page break after table of contents
+
+    # Generate each chapter
+    for i in range(num_chapters):
+        # Extract chapter title from the parsed table of contents
+        chapter_title = chapter_titles[i].split(': ')[1]
+
+        # Add chapter title as h1
+        doc.add_heading(f"Chapter {i+1}: {chapter_title}", level=1)
+
+        # Initialize chapter content variable
+        chapter_content = ""
+
+        # Generate each section within the chapter
+        for j in range(num_sections_per_chapter):
+            # Generate section content
+            section_prompt = f"The table of contents of the book is as follows:\n{toc}\n\nThe content of chapter {i+1} so far is:\n{chapter_content}\n\nNow, write the content for section {j+1} of chapter {i+1}, which should be approximately {section_length} words long, suitable for a '{reader_level}' reader and in a '{writing_style}' style."
+            response = make_api_call(section_prompt, section_length * 5)  # Adjust token count based on desired word count for section
+            section_content = response.get('content', '').strip()
+
+            # Add section content to chapter content
+            chapter_content += f"\n\nSection {j+1}: {section_content}"
+
+        # Add chapter content to the document
+        doc.add_paragraph(chapter_content.strip())
+
+        # Add page break after each chapter
+        doc.add_page_break()
+
+    # Define the directory
+    dir_name = 'C:\\Users\\Chris\\Desktop\\book app streamlit\\test books'
+
+    # Create the directory if it doesn't exist
+    os.makedirs(dir_name, exist_ok=True)
+
+    # Save the entire book to a .docx file in the specified directory
+    doc.save(f"{dir_name}\\{filename}.docx")
+
+# Streamlit interface
+st.title("Book Generator")
+topic = st.text_input("Enter the topic:")
+description = st.text_area("Enter the description:", height=200)
+reader_level = st.selectbox("Select the reader level:", ["Beginner", "Intermediate", "Advanced"])
+writing_style = st.selectbox("Select the writing style:", ["immersive and narrative driven", "Formal", "Informal"])
+num_chapters = st.number_input("Number of chapters:", min_value=1, max_value=100, value=5)
+num_sections_per_chapter = st.number_input("Number of sections per chapter:", min_value=1, max_value=10, value=2)
+section_length = st.number_input("Section length (words):", min_value=100, max_value=3500, value=500)  # Adjust as needed
+filename = st.text_input("Enter the filename:")
+
+if st.button("Generate Book"):
+    generate_book(topic, description, reader_level, writing_style, num_chapters, num_sections_per_chapter, section_length, filename)
+    st.success("Book generated successfully!")
